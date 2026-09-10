@@ -12,14 +12,6 @@ env:
   IMAGE_NAME: ${{ github.repository_owner }}/mscp_2.0
 
 jobs:
-  # ---------------------------------------------------------------------------
-  # Build each architecture natively.
-  #
-  # amd64 -> ubuntu-24.04
-  # arm64 -> ubuntu-24.04-arm
-  #
-  # This avoids QEMU entirely.
-  # ---------------------------------------------------------------------------
   build:
     name: Build ${{ matrix.arch }}
     if: >
@@ -39,7 +31,6 @@ jobs:
           - arch: amd64
             platform: linux/amd64
             runner: ubuntu-24.04
-
           - arch: arm64
             platform: linux/arm64
             runner: ubuntu-24.04-arm
@@ -62,16 +53,9 @@ jobs:
         run: |
           repo="${{ github.repository }}"
 
-          wf_id=$(
-            gh api "repos/$repo/actions/workflows" \
-              --jq '.workflows[] | select(.name == "Lint Code Base") | .id'
-          )
+          wf_id=$(gh api "repos/$repo/actions/workflows" --jq '.workflows[] | select(.name == "Lint Code Base") | .id')
 
-          result=$(
-            gh api \
-              "repos/$repo/actions/workflows/$wf_id/runs?head_sha=$SHA&per_page=1" \
-              --jq '.workflow_runs[0].conclusion // empty'
-          )
+          result=$(gh api "repos/$repo/actions/workflows/$wf_id/runs?head_sha=$SHA&per_page=1" --jq '.workflow_runs[0].conclusion // empty')
 
           if [[ "$result" != "success" ]]; then
             echo "Lint Code Base did not pass (conclusion: ${result:-not found})"
@@ -83,7 +67,6 @@ jobs:
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
-      # No QEMU setup is required. Each architecture runs natively.
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
 
@@ -123,36 +106,22 @@ jobs:
         with:
           context: .
           file: .github/container/Dockerfile
-
-          # Exactly one native architecture is built by each runner.
           platforms: ${{ matrix.platform }}
-
           push: true
-
-          # Publish temporary architecture-specific images.
-          # The merge job below creates the public multi-arch tags.
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.source.outputs.temp_tag }}
-
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ steps.source.outputs.sha }}
-
           build-args: |
             BUILD_SHA=${{ steps.source.outputs.sha }}
             IMAGE_REPO=${{ github.repository }}
             IMAGE_TAG=${{ steps.source.outputs.image_tag }}
-
-          # Give each architecture its own cache scope so amd64 and arm64
-          # do not overwrite one another's BuildKit cache.
           cache-from: |
             type=gha,scope=container-${{ matrix.arch }}
           cache-to: |
             type=gha,mode=max,scope=container-${{ matrix.arch }}
 
-  # ---------------------------------------------------------------------------
-  # Combine the two native images into a multi-platform manifest.
-  # ---------------------------------------------------------------------------
   merge-and-publish:
     name: Publish multi-arch image
     needs: build
@@ -233,14 +202,9 @@ jobs:
             "$amd64_image" \
             "$arm64_image"
 
-          # All final tags point to the same manifest digest.
           first_tag=$(printf '%s\n' "$TAGS" | head -n 1)
 
-          digest=$(
-            docker buildx imagetools inspect "$first_tag" \
-              --format '{{json .Manifest.Digest}}' |
-              tr -d '"'
-          )
+          digest=$(docker buildx imagetools inspect "$first_tag" --format '{{json .Manifest.Digest}}' | tr -d '"')
 
           echo "digest=${digest}" >> "$GITHUB_OUTPUT"
           echo "Published manifest digest: ${digest}"
@@ -270,4 +234,3 @@ jobs:
           subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           subject-digest: ${{ steps.manifest.outputs.digest }}
           push-to-registry: true
-```
